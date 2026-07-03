@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import { fetchWeek, saveRow, submitWeek as apiSubmitWeek } from "./api";
 
 type Sender = "bot" | "user";
 
@@ -11,6 +12,28 @@ type Message = {
   text: string;
   time: string;
 };
+const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri"] as const;
+
+function backendToFrontend(row: Record<string, unknown>): TimesheetRow {
+  return {
+    id: String(row.id ?? `r${Date.now()}-${Math.random()}`),
+    chargeCode: String(row.charge_code ?? ""),
+    workLocation: String(row.work_location ?? ""),
+    hours: DAY_KEYS.map((d) => Number(row[d]) || 0),
+  };
+}
+
+function frontendToBackend(row: TimesheetRow) {
+  return {
+    charge_code: row.chargeCode,
+    work_location: row.workLocation,
+    mon: row.hours[0] || 0,
+    tue: row.hours[1] || 0,
+    wed: row.hours[2] || 0,
+    thu: row.hours[3] || 0,
+    fri: row.hours[4] || 0,
+  };
+}
 
 type TimesheetRow = {
   id: string;
@@ -167,11 +190,35 @@ export default function App() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   // Timesheet state (manual entry)
-  const [rows, setRows] = useState<TimesheetRow[]>([
-    { id: "r1", chargeCode: "Work Schedule", workLocation: "MA", hours: [7.5, 7.5, 7.5, 7.5, 7.5] },
-    { id: "r2", chargeCode: "Travel Time", workLocation: "MA", hours: [0, 0, 0, 0, 0] },
-    { id: "r3", chargeCode: "Public Holiday", workLocation: "MA", hours: [0, 0, 0, 0, 0] },
-  ]);
+  const [rows, setRows] = useState<TimesheetRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  // Fetch rows from backend whenever the selected week changes
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchWeek(weekStart)
+      .then((data) => {
+        if (cancelled) return;
+        if (data.rows && data.rows.length > 0) {
+          setRows(data.rows.map(backendToFrontend));
+        } else {
+          setRows([
+            { id: `r${Date.now()}`, chargeCode: "", workLocation: "MA", hours: [0, 0, 0, 0, 0] },
+          ]);
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRows([
+          { id: `r${Date.now()}`, chargeCode: "", workLocation: "MA", hours: [0, 0, 0, 0, 0] },
+        ]);
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [weekStart]);
 
   // Simple “submitted” status per weekday (prototype)
   const [submittedDays, setSubmittedDays] = useState<boolean[]>([false, false, false, false, false]);
@@ -221,6 +268,20 @@ export default function App() {
         return { ...r, hours: next };
       })
     );
+  }
+  async function handleSave() {
+    setSaveStatus("Saving...");
+    try {
+      for (const row of rows) {
+        if (!row.chargeCode.trim()) continue;
+        await saveRow(weekStart, frontendToBackend(row));
+      }
+      setSaveStatus("Saved ✅");
+      setTimeout(() => setSaveStatus(null), 2000);
+    } catch (err) {
+      setSaveStatus(err instanceof Error ? err.message : "Save failed.");
+      setTimeout(() => setSaveStatus(null), 3000);
+    }
   }
 
   function send(userText?: string) {
@@ -277,16 +338,32 @@ export default function App() {
     setMessages((prev) => [...prev, botMsg]);
   }
 
-  function submitWeek() {
-    const missingIdxs = missingDayIndices(dayTotals);
+async function handleSubmitWeek() {
+    // Save all rows to backend first
+    try {
+      for (const row of rows) {
+        if (!row.chargeCode.trim()) continue;
+        await saveRow(weekStart, frontendToBackend(row));
+      }
+    } catch {
+      const botMsg: Message = {
+        id: `b${Date.now() + 1}`,
+        sender: "bot",
+        text: "Failed to save rows before submitting. Please try again.",
+        time: nowTimeLabel(),
+      };
+      setMessages((prev) => [...prev, botMsg]);
+      return;
+    }
 
-    // Add a "user" message so it feels like a real action in the chat history
     const userMsg: Message = {
       id: `u${Date.now()}`,
       sender: "user",
       text: "Submit all entries",
       time: nowTimeLabel(),
     };
+
+    const missingIdxs = missingDayIndices(dayTotals);
 
     if (missingIdxs.length > 0) {
       const dates = missingIdxs.map((i) => formatLongDate(weekDates[i]));
@@ -296,7 +373,7 @@ export default function App() {
         id: `b${Date.now() + 1}`,
         sender: "bot",
         text:
-          "I can’t submit yet — these day(s) have 0 hours:\n" +
+          "I can't submit yet — these day(s) have 0 hours:\n" +
           dates.map((d) => `• ${d}`).join("\n") +
           "\n\nFill those in and try again ✅",
         time: nowTimeLabel(),
@@ -306,19 +383,30 @@ export default function App() {
       return;
     }
 
-    setSubmittedDays([true, true, true, true, true]);
+    try {
+      await apiSubmitWeek(weekStart);
+      setSubmittedDays([true, true, true, true, true]);
 
-    const botMsg: Message = {
-      id: `b${Date.now() + 1}`,
-      sender: "bot",
-      text:
-        "Done ✅ I’ve marked this week as submitted (prototype).\n\n" +
-        `Mid-month deadline: ${formatLongDate(nextMid)}\n` +
-        `Month-end deadline: ${formatLongDate(nextEnd)}`,
-      time: nowTimeLabel(),
-    };
+      const botMsg: Message = {
+        id: `b${Date.now() + 1}`,
+        sender: "bot",
+        text:
+          "Done ✅ Your timesheet has been submitted.\n\n" +
+          `Mid-month deadline: ${formatLongDate(nextMid)}\n` +
+          `Month-end deadline: ${formatLongDate(nextEnd)}`,
+        time: nowTimeLabel(),
+      };
 
-    setMessages((prev) => [...prev, userMsg, botMsg]);
+      setMessages((prev) => [...prev, userMsg, botMsg]);
+    } catch (err) {
+      const botMsg: Message = {
+        id: `b${Date.now() + 1}`,
+        sender: "bot",
+        text: err instanceof Error ? err.message : "Submission failed.",
+        time: nowTimeLabel(),
+      };
+      setMessages((prev) => [...prev, userMsg, botMsg]);
+    }
   }
 
   // UI bits
@@ -473,7 +561,7 @@ export default function App() {
               </div>
 
               <div className="tsActions">
-                <button className="tsMiniBtn" onClick={() => alert("Prototype: save not wired yet")}>Save</button>
+                <button className="tsMiniBtn" onClick={handleSave}>{saveStatus || "Save"}</button>
                 <button className="tsMiniBtn" onClick={() => alert("Prototype: delete not wired yet")}>Delete</button>
                 <button className="tsMiniBtn" onClick={() => alert("Prototype: set template not wired yet")}>Set template</button>
                 <button className="tsMiniBtn" onClick={() => send("Help")}>Help</button>
@@ -667,7 +755,7 @@ export default function App() {
           <div className="panelTitle" style={{ marginTop: 14 }}>
             Quick Actions
           </div>
-          <button className="bigBtn" onClick={submitWeek}>Submit all entries</button>
+          <button className="bigBtn" onClick={handleSubmitWeek}>Submit all entries</button>
           <button className="bigBtn secondary" onClick={() => alert("Prototype: download not wired yet")}>
             Download report (prototype)
           </button>
