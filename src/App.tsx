@@ -18,6 +18,16 @@ type TimesheetRow = {
   workLocation: string;
   hours: number[]; // Mon..Fri
 };
+function renderMarkdownLine(line: string) {
+  const parts = line.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") ? (
+      <strong key={i}>{part.slice(2, -2)}</strong>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  );
+}
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -366,8 +376,8 @@ export default function App() {
             <div className="userChip">
               <div className="userAvatar">JD</div>
               <div>
-                <div className="userName">n DoJohe</div>
-                <div className="userEmail">john@company.com</div>
+                <div className="userName">Aminah Gani</div>
+                <div className="userEmail">aminah@company.com</div>
               </div>
             </div>
           </div>
@@ -393,7 +403,7 @@ export default function App() {
                     <div className={`bubble ${m.sender}`}>
                       <div className="bubbleText">
                         {m.text.split("\n").map((line, idx) => (
-                          <div key={idx}>{line}</div>
+                          <div key={idx}>{renderMarkdownLine(line)}</div>
                         ))}
                       </div>
                       <div className="bubbleTime">{m.time}</div>
