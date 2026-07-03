@@ -187,6 +187,7 @@ export default function App() {
     },
   ]);
   const [input, setInput] = useState<string>("");
+  const [awaitingSubmitConfirm, setAwaitingSubmitConfirm] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   // Timesheet state (manual entry)
@@ -284,7 +285,7 @@ export default function App() {
     }
   }
 
-  function send(userText?: string) {
+  async function send(userText?: string) {
     const text = (userText ?? input).trim();
     if (!text) return;
 
@@ -297,10 +298,51 @@ export default function App() {
 
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    setMessages((prev) => [...prev, userMsg]);
+setInput("");
 
-    // Prototype bot reply (no real API)
-    const t = text.toLowerCase();
-    let reply = "Got it ✅";
+// If we're waiting on a submit confirmation, handle yes/no here first —
+// before any keyword matching — so "yes" actually triggers a real submit.
+if (awaitingSubmitConfirm) {
+  setAwaitingSubmitConfirm(false); // reset regardless of answer
+
+  if (t.includes("yes")) {
+    try {
+      await apiSubmitWeek(weekStart);
+      setSubmittedDays([true, true, true, true, true]);
+      const botMsg: Message = {
+        id: `b${Date.now() + 1}`,
+        sender: "bot",
+        text: "Done ✅ Your timesheet has been submitted.",
+        time: nowTimeLabel(),
+      };
+      setMessages((prev) => [...prev, botMsg]);
+    } catch (err) {
+      const botMsg: Message = {
+        id: `b${Date.now() + 1}`,
+        sender: "bot",
+        text: err instanceof Error ? err.message : "Submission failed. Please try again.",
+        time: nowTimeLabel(),
+      };
+      setMessages((prev) => [...prev, botMsg]);
+    }
+    return;
+  } else {
+    const botMsg: Message = {
+      id: `b${Date.now() + 1}`,
+      sender: "bot",
+      text: "No problem — not submitted. Let me know when you're ready.",
+      time: nowTimeLabel(),
+    };
+    setMessages((prev) => [...prev, botMsg]);
+    return;
+  }
+}
+
+// Prototype bot reply (no real API)
+const t = text.toLowerCase();
+let reply = "Got it ✅";
+
 
     if (t.includes("hours") || t.includes("show hours") || t.includes("week")) {
       reply =
@@ -312,11 +354,12 @@ export default function App() {
           ? "Nice — no missing days this week 🎉"
           : `You have **${missingDaysCount} missing day(s)** (0 hours logged). Want me to open the Timesheets tab?`;
     } else if (t.includes("submit")) {
-      reply =
-        `To submit: make sure your entries look right, then submit by:\n` +
-        `• Mid-month deadline: **${formatLongDate(nextMid)}**\n` +
-        `• Month-end deadline: **${formatLongDate(nextEnd)}**\n\n` +
-        `Want me to mark this week as “submitted” (prototype)?`;
+    reply =
+    `To submit: make sure your entries look right, then submit by:\n` +
+    `• Mid-month deadline: **${formatLongDate(nextMid)}**\n` +
+    `• Month-end deadline: **${formatLongDate(nextEnd)}**\n\n` +
+    `Want me to mark this week as "submitted" (prototype)?`;
+    setAwaitingSubmitConfirm(true);
     } else if (t.includes("help")) {
       reply =
         "Quick options:\n" +
