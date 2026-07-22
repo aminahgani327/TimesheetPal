@@ -298,9 +298,8 @@ export default function App() {
 
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
-    setMessages((prev) => [...prev, userMsg]);
-setInput("");
 
+const t = text.toLowerCase();
 // If we're waiting on a submit confirmation, handle yes/no here first —
 // before any keyword matching — so "yes" actually triggers a real submit.
 if (awaitingSubmitConfirm) {
@@ -340,7 +339,6 @@ if (awaitingSubmitConfirm) {
 }
 
 // Prototype bot reply (no real API)
-const t = text.toLowerCase();
 let reply = "Got it ✅";
 
 
